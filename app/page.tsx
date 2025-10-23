@@ -9,8 +9,8 @@ import {
 } from "lucide-react";
 
 // --- Configuration ---
-const NODE_WIDTH = 180;
-const NODE_HEIGHT = 90;
+const NODE_WIDTH = 150;
+const NODE_HEIGHT = 70;
 
 const AGENTS = [
     { id: "input", label: "Input Segregation", icon: <FileStack size={24} />, type: "input" },
@@ -72,9 +72,10 @@ function generateCenteredPositions(width: number, height: number): Record<string
 function pathBetween(a: Position, b: Position): string {
     const [ax, ay] = [a.x + NODE_WIDTH, a.y + NODE_HEIGHT / 2];
     const [bx, by] = [b.x, b.y + NODE_HEIGHT / 2];
-    const [cx1, cy1] = [ax + 80, ay];
-    const [cx2, cy2] = [bx - 80, by];
-    return `M ${ax} ${ay} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${bx} ${by}`;
+    // const [cx1, cy1] = [ax + 80, ay];
+    // const [cx2, cy2] = [bx - 80, by];
+    // return `M ${ax} ${ay} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${bx} ${by}`;
+    return `M ${ax} ${ay} L ${bx} ${by}`;
 }
 
 // --- Node Component ---
@@ -137,13 +138,13 @@ const NodeCard = ({ node, pos, isComplete, isProcessing }: { node: Node; pos: Po
             animate={{ scale: 1, opacity: 1 }}
             transition={{ duration: 0.4, ease: "easeOut" }}
         >
-            <div className="flex items-center gap-3 h-full p-4 relative">
-                <div className={`p-2.5 rounded-lg ${styles.iconBg} flex-shrink-0`}>
+            <div className="flex items-center gap-2 h-full p-3 relative">
+                <div className={`p-2 rounded-lg ${styles.iconBg} flex-shrink-0`}>
                     <div className="text-slate-200">
                         {node.icon}
                     </div>
                 </div>
-                <div className={`text-sm font-medium ${styles.text} leading-tight flex-1`}>
+                <div className={`text-xs font-medium ${styles.text} leading-tight flex-1`}>
                     {node.label}
                 </div>
                 
