@@ -77,12 +77,12 @@ function pathBetween(a: Position, b: Position): string {
 
 const NodeCard = ({ node, pos, isComplete, isProcessing }: { node: Node; pos: Position; isComplete: boolean; isProcessing: boolean }) => {
     const typeColors = {
-        input: "from-slate-700/90 to-slate-800/90 border-slate-600/50",
-        extractor: "from-slate-700/90 to-slate-800/90 border-slate-600/50",
-        utility: "from-slate-700/90 to-slate-800/90 border-slate-600/50",
-        analysis: "from-slate-700/90 to-slate-800/90 border-slate-600/50",
-        aggregate: "from-slate-700/90 to-slate-800/90 border-slate-600/50",
-        end: "from-slate-700/90 to-slate-800/90 border-slate-600/50"
+        input: "from-blue-600/20 to-blue-800/20 border-blue-500/40",
+        extractor: "from-violet-600/20 to-violet-800/20 border-violet-500/40",
+        utility: "from-cyan-600/20 to-cyan-800/20 border-cyan-500/40",
+        analysis: "from-amber-600/20 to-amber-800/20 border-amber-500/40",
+        aggregate: "from-emerald-600/20 to-emerald-800/20 border-emerald-500/40",
+        end: "from-orange-600/20 to-orange-800/20 border-orange-500/40"
     };
 
     const baseColor = typeColors[node.type as keyof typeof typeColors] || typeColors.extractor;
@@ -96,13 +96,25 @@ const NodeCard = ({ node, pos, isComplete, isProcessing }: { node: Node; pos: Po
             initial={{ scale: 0, opacity: 0 }}
             animate={{ 
                 scale: isProcessing ? [1, 1.05, 1] : 1, 
-                opacity: 1
+                opacity: 1,
+                boxShadow: isComplete 
+                    ? "0 0 30px rgba(249, 115, 22, 0.4)" 
+                    : isProcessing 
+                    ? "0 0 20px rgba(249, 115, 22, 0.2)" 
+                    : "0 0 0 rgba(0,0,0,0)"
             }}
             transition={{ 
                 scale: { duration: 0.4, repeat: isProcessing ? Infinity : 0 },
                 opacity: { duration: 0.6, ease: "easeOut" }
             }}
         >
+            {isProcessing && (
+                <motion.div
+                    className="absolute inset-0 rounded-xl bg-gradient-to-r from-orange-500/0 via-orange-500/20 to-orange-500/0"
+                    animate={{ x: ["-100%", "200%"] }}
+                    transition={{ duration: 1.5, repeat: Infinity, ease: "linear" }}
+                />
+            )}
             
             <div className="flex items-center gap-3 h-full p-4 relative z-10">
                 <motion.div 
@@ -131,7 +143,7 @@ const NodeCard = ({ node, pos, isComplete, isProcessing }: { node: Node; pos: Po
                     )}
                 </AnimatePresence>
                 
-                {/* {isProcessing && !isComplete && (
+                {isProcessing && !isComplete && (
                     <motion.div
                         animate={{ rotate: 360 }}
                         transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
@@ -139,7 +151,7 @@ const NodeCard = ({ node, pos, isComplete, isProcessing }: { node: Node; pos: Po
                     >
                         <Loader2 size={14} className="text-white" />
                     </motion.div>
-                )} */}
+                )}
             </div>
         </motion.div>
     );
@@ -181,21 +193,25 @@ const MovingDoc = ({ start, end, duration }: { start: Position; end: Position; d
                     x: start.x + NODE_WIDTH - 20,
                     y: start.y + NODE_HEIGHT / 2 - 20,
                     opacity: 0,
-                    scale: 0.8,
+                    scale: 0.5,
                 }}
                 animate={{
                     x: end.x - 20,
                     y: end.y + NODE_HEIGHT / 2 - 20,
-                    opacity: 1,
-                    scale: 1,
+                    opacity: [0, 1, 1, 0.8],
+                    scale: [0.5, 1.2, 1, 1],
                 }}
                 transition={{ 
                     duration: duration / 1000, 
-                    ease: [0.4, 0, 0.2, 1],
+                    ease: [0.34, 1.56, 0.64, 1],
                 }}
             >
                 <div className="relative">
-                    <div className="absolute inset-0 bg-orange-500 rounded-xl blur-lg opacity-40" />
+                    <motion.div 
+                        className="absolute inset-0 bg-orange-500 rounded-xl blur-xl"
+                        animate={{ scale: [1, 1.5, 1], opacity: [0.6, 0.3, 0.6] }}
+                        transition={{ duration: 1, repeat: Infinity }}
+                    />
                     <div className="relative bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl p-2.5 shadow-2xl flex items-center justify-center border-2 border-orange-400/50">
                         <FileText size={18} className="text-white" />
                         {particles.map(p => (
@@ -218,9 +234,9 @@ const MovingDoc = ({ start, end, duration }: { start: Position; end: Position; d
 
 const MetricsPanel = ({ processedDocs, activeAgents, totalTime }: { processedDocs: number; activeAgents: number; totalTime: string }) => (
     <motion.div
-        initial={{ opacity: 0, y: 20 }}
+        initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="absolute top-4 right-4 bg-slate-900/90 backdrop-blur-xl border border-slate-700/50 rounded-xl p-5 shadow-2xl"
+        className="absolute top-8 right-8 bg-slate-900/90 backdrop-blur-xl border border-slate-700/50 rounded-xl p-5 shadow-2xl"
     >
         <div className="text-xs font-semibold text-slate-400 mb-3 uppercase tracking-wider">Live Metrics</div>
         <div className="grid grid-cols-3 gap-6">
@@ -449,22 +465,38 @@ export default function DocumentJourneyInteractive() {
                     <p className="text-sm text-slate-400 mt-1.5">Intelligent workflow orchestration powered by AI agents</p>
                 </div>
                 <div className="flex items-center gap-5">
-                    <div className="flex items-center gap-2.5 px-5 py-2.5 bg-slate-800/60 rounded-xl border border-slate-700/50 backdrop-blur-sm">
-                        {running && (
-                            <>
-                                <Loader2 className="animate-spin text-orange-500" size={18}/>
-                                <span className="text-sm font-semibold text-orange-500">Processing</span>
-                            </>
+                    <div className="flex items-center gap-4">
+                        {(running || finished) && (
+                            <motion.div 
+                                initial={{ scale: 0.9, opacity: 0 }}
+                                animate={{ scale: 1, opacity: 1 }}
+                                className="flex items-center gap-2.5 px-5 py-2.5 bg-slate-800/60 rounded-xl border border-slate-700/50 backdrop-blur-sm"
+                            >
+                                <Clock size={16} className="text-slate-400" />
+                                <span className="text-sm font-semibold text-slate-200 tabular-nums">{formatTime(elapsedTime)}</span>
+                            </motion.div>
                         )}
-                        {finished && (
-                            <>
-                                <CheckCircle className="text-emerald-500" size={18}/>
-                                <span className="text-sm font-semibold text-emerald-500">Completed</span>
-                            </>
-                        )}
-                        {!running && !finished && (
-                            <span className="text-sm font-semibold text-slate-400">Ready to Process</span>
-                        )}
+                        <motion.div 
+                            className="flex items-center gap-2.5 px-5 py-2.5 bg-slate-800/60 rounded-xl border border-slate-700/50 backdrop-blur-sm"
+                            animate={running ? { boxShadow: ["0 0 0 rgba(249,115,22,0)", "0 0 20px rgba(249,115,22,0.3)", "0 0 0 rgba(249,115,22,0)"] } : {}}
+                            transition={{ duration: 2, repeat: Infinity }}
+                        >
+                            {running && (
+                                <>
+                                    <Loader2 className="animate-spin text-orange-500" size={18}/>
+                                    <span className="text-sm font-semibold text-orange-500">Processing</span>
+                                </>
+                            )}
+                            {finished && (
+                                <>
+                                    <CheckCircle className="text-emerald-500" size={18}/>
+                                    <span className="text-sm font-semibold text-emerald-500">Completed</span>
+                                </>
+                            )}
+                            {!running && !finished && (
+                                <span className="text-sm font-semibold text-slate-400">Ready to Process</span>
+                            )}
+                        </motion.div>
                     </div>
                     {finished && (
                         <motion.button
