@@ -11,6 +11,9 @@ import {
 
 const NODE_WIDTH = 160;
 const NODE_HEIGHT = 80;
+const LAYER_TRANSITION_DELAY = 3000; // Time between layer transitions in milliseconds
+const DOC_MOVEMENT_DURATION = 2000; // Duration for document movement between nodes
+const DOC_MOVEMENT_DELAY = 5000; // Delay between document movements
 
 const AGENTS = [
     { id: "file_input", label: "File Input", icon: <Upload size={24} />, type: "file_input" },
@@ -381,6 +384,7 @@ export default function DocumentJourneyInteractive() {
     const [processedCount, setProcessedCount] = useState(0);
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
     const [activeColumn, setActiveColumn] = useState(0);
+    const [targetColumn, setTargetColumn] = useState(0);
 
     const canvasRef = useRef<HTMLDivElement>(null);
     const timeoutIds = useRef<NodeJS.Timeout[]>([]);
@@ -438,6 +442,7 @@ export default function DocumentJourneyInteractive() {
         setVisibleDocs([]);
         setProcessedCount(0);
         setActiveColumn(0);
+        setTargetColumn(0);
 
         // --- Modified Simulation Logic ---
         setTimeout(() => {
@@ -451,9 +456,9 @@ export default function DocumentJourneyInteractive() {
         let currentTime = 1000;
         const timedSequence: TimedStep[] = EDGES.map(([from, to], index) => {
             if(from === 'file_input') return null; // Already handled
-            const duration = 1800 + Math.random() * 1200;
+            const duration = DOC_MOVEMENT_DURATION;
             const step = { id: `${from}-${to}-${index}`, from, to, startTime: currentTime, duration };
-            currentTime += 400 + Math.random() * 400;
+            currentTime += DOC_MOVEMENT_DELAY;
             return step;
         }).filter(Boolean) as TimedStep[];
 
@@ -467,10 +472,10 @@ export default function DocumentJourneyInteractive() {
                     return newSet;
                 });
 
-                // Update active column based on the new processing node
+                // Update target column based on the new processing node
                 const targetNodeColumn = NODE_COLUMNS[step.to];
                 if (targetNodeColumn >= 0) {
-                     setActiveColumn(Math.max(targetNodeColumn, 0));
+                     setTargetColumn(Math.max(targetNodeColumn, 0));
                 }
             }, step.startTime));
 
@@ -499,6 +504,24 @@ export default function DocumentJourneyInteractive() {
     useEffect(() => {
         return () => timeoutIds.current.forEach(clearTimeout);
     }, []);
+
+    // Smooth camera transition effect
+    useEffect(() => {
+        if (targetColumn !== activeColumn) {
+            const interval = setInterval(() => {
+                setActiveColumn(prev => {
+                    if (prev < targetColumn) {
+                        return prev + 1;
+                    } else if (prev > targetColumn) {
+                        return prev - 1;
+                    }
+                    return prev;
+                });
+            }, LAYER_TRANSITION_DELAY); // Move camera every LAYER_TRANSITION_DELAY ms
+            
+            return () => clearInterval(interval);
+        }
+    }, [targetColumn, activeColumn]);
 
     const formatTime = (ms: number) => {
         const seconds = Math.floor(ms / 1000);
