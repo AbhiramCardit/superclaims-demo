@@ -9,13 +9,13 @@ const ConvergingLines = ({
   currentLayer,
   show
 }: {
-  agentRefs: React.RefObject<HTMLDivElement>[][];
+  agentRefs: React.RefObject<HTMLDivElement | null>[][];
   currentLayer: number;
   show: boolean;
 }) => {
   if (!show || currentLayer < 0 || !agentRefs[currentLayer]) return null;
 
-  const lines: JSX.Element[] = [];
+  const lines: React.ReactElement[] = [];
 
   agentRefs[currentLayer].forEach((ref, idx) => {
     if (!ref.current) return;
@@ -78,8 +78,8 @@ const FlowConnectors = ({
   currentRefs,
   show
 }: {
-  prevRef: React.RefObject<HTMLDivElement>;
-  currentRefs: React.RefObject<HTMLDivElement>[];
+  prevRef: React.RefObject<HTMLDivElement | null>;
+  currentRefs: React.RefObject<HTMLDivElement | null>[];
   show: boolean;
 }) => {
   if (!show || !prevRef.current || currentRefs.some(r => !r.current)) return null;
