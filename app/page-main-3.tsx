@@ -53,15 +53,15 @@ type Particle = { id: string; x: number; y: number; vx: number; vy: number; life
 
 // --- New Logic for Columnar Layout ---
 const NODE_COLUMNS: Record<string, number> = {
-    "file_input": 0,
-    "input": 1,
-    "claim_form_agent": 2, "discharge_summary_agent": 2, "pharmacy_bills_agent": 2, "cheque_or_bank_details_agent": 2, "ids_agent": 2,
-    "items_categorisation_agent": 3, "duplicate_detection_agent": 3,
-    "patient_summary_agent": 4, "nme_analysis_agent": 4,
-    "completion_aggregator": 5
+    "file_input": 1,
+    "input": 2,
+    "claim_form_agent": 3, "discharge_summary_agent": 3, "pharmacy_bills_agent": 3, "cheque_or_bank_details_agent": 3, "ids_agent": 3,
+    "items_categorisation_agent": 4, "duplicate_detection_agent": 4,
+    "patient_summary_agent": 5, "nme_analysis_agent": 5,
+    "completion_aggregator": 6
 };
 
-const MAX_COLUMNS = 6;
+const MAX_COLUMNS = 7;
 
 function generateAllPositions(width: number, height: number): Record<string, Position> {
     if (!width || !height) return {};
@@ -79,14 +79,6 @@ function generateAllPositions(width: number, height: number): Record<string, Pos
                 yOffset = -1; // Move file_input up
             } else if (node.id === "input") {
                 yOffset = 1; // Move input segregation down
-            } else if (node.id === "cheque_or_bank_details_agent") {
-                yOffset = -0.5; // Move cheque/bank up slightly
-            } else if (node.id === "patient_summary_agent") {
-                yOffset = 0.5; // Move patient summary down slightly
-            } else if (node.id === "duplicate_detection_agent") {
-                yOffset = -0.3; // Move duplicate detection up slightly
-            } else if (node.id === "nme_analysis_agent") {
-                yOffset = 0.3; // Move NME analysis down slightly
             }
             
             positions[node.id] = {
@@ -380,7 +372,7 @@ export default function DocumentJourneyInteractive() {
     const [elapsedTime, setElapsedTime] = useState(0);
     const [processedCount, setProcessedCount] = useState(0);
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
-    const [activeColumn, setActiveColumn] = useState(0);
+    const [activeColumn, setActiveColumn] = useState(1);
 
     const canvasRef = useRef<HTMLDivElement>(null);
     const timeoutIds = useRef<NodeJS.Timeout[]>([]);
@@ -437,7 +429,7 @@ export default function DocumentJourneyInteractive() {
         setProcessingNodes(new Set(["file_input"])); // Start with file_input processing
         setVisibleDocs([]);
         setProcessedCount(0);
-        setActiveColumn(0);
+        setActiveColumn(1);
 
         // --- Modified Simulation Logic ---
         setTimeout(() => {
@@ -469,8 +461,8 @@ export default function DocumentJourneyInteractive() {
 
                 // Update active column based on the new processing node
                 const targetNodeColumn = NODE_COLUMNS[step.to];
-                if (targetNodeColumn >= 0) {
-                     setActiveColumn(Math.max(targetNodeColumn, 0));
+                if (targetNodeColumn > 0) {
+                     setActiveColumn(Math.max(targetNodeColumn, 1));
                 }
             }, step.startTime));
 
@@ -605,24 +597,19 @@ export default function DocumentJourneyInteractive() {
                         <AnimatePresence>
                             {nodes.map(n => {
                                 const nodeColumn = NODE_COLUMNS[n.id];
-                                // Render all nodes, but scale them based on distance from active column
-                                if (allPositions[n.id]) {
-                                    const distanceFromActive = Math.abs(nodeColumn - activeColumn);
-                                    const shouldRender = distanceFromActive <= 2; // Show current + 2 columns ahead/behind
-                                    
-                                    if (shouldRender) {
-                                        return (
-                                            <NodeCard 
-                                                key={n.id} 
-                                                node={n} 
-                                                pos={allPositions[n.id]} 
-                                                isComplete={completedNodes.has(n.id)}
-                                                isProcessing={processingNodes.has(n.id)}
-                                                selectedFile={n.id === "file_input" ? selectedFile : undefined}
-                                                onFileSelect={n.id === "file_input" ? setSelectedFile : undefined}
-                                            />
-                                        );
-                                    }
+                                // Only render nodes in the current, previous, or next column
+                                if (allPositions[n.id] && Math.abs(nodeColumn - activeColumn) <= 1) {
+                                    return (
+                                        <NodeCard 
+                                            key={n.id} 
+                                            node={n} 
+                                            pos={allPositions[n.id]} 
+                                            isComplete={completedNodes.has(n.id)}
+                                            isProcessing={processingNodes.has(n.id)}
+                                            selectedFile={n.id === "file_input" ? selectedFile : undefined}
+                                            onFileSelect={n.id === "file_input" ? setSelectedFile : undefined}
+                                        />
+                                    );
                                 }
                                 return null;
                             })}
