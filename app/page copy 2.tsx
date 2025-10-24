@@ -14,8 +14,8 @@ const NODE_WIDTH = 160;
 const NODE_HEIGHT = 80;
 
 // Master timing control - adjust this to speed up/slow down entire animation
-const ANIMATION_SPEED_MULTIPLIER = 2.8 + Math.random() * 0.5; // Random between 2.8-3.3 for each run
-// const ANIMATION_SPEED_MULTIPLIER = 1
+//const ANIMATION_SPEED_MULTIPLIER = 2.8 + Math.random() * 0.5; // Random between 2.8-3.3 for each run
+const ANIMATION_SPEED_MULTIPLIER = 1
 
 const LAYER_TRANSITION_DELAY = 1000 * ANIMATION_SPEED_MULTIPLIER; // Time between layer transitions in milliseconds
 const DOC_MOVEMENT_DURATION = 2000 ; // Duration for document movement between nodes
@@ -353,6 +353,8 @@ export default function DocumentJourneyInteractive() {
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
     const [activeColumn, setActiveColumn] = useState(0);
     const [targetColumn, setTargetColumn] = useState(0);
+    const [manualScrollOffset, setManualScrollOffset] = useState(0);
+    const [isUserScrolling, setIsUserScrolling] = useState(false);
 
     const canvasRef = useRef<HTMLDivElement>(null);
     const timeoutIds = useRef<NodeJS.Timeout[]>([]);
@@ -411,6 +413,8 @@ export default function DocumentJourneyInteractive() {
         setProcessedCount(0);
         setActiveColumn(0);
         setTargetColumn(0);
+        setManualScrollOffset(0); // Reset manual scroll when starting
+        setIsUserScrolling(false); // Reset user scrolling state
 
         // --- Modified Simulation Logic for Layer-based Movement ---
         setTimeout(() => {
@@ -498,6 +502,36 @@ export default function DocumentJourneyInteractive() {
         return () => timeoutIds.current.forEach(clearTimeout);
     }, []);
 
+    // Handle wheel events for horizontal scrolling - always active
+    useEffect(() => {
+        const handleWheel = (e: WheelEvent) => {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            setIsUserScrolling(true);
+            
+            const scrollSpeed = 30; // Adjust scroll speed
+            const columnWidth = (dimensions.width + 100) / 3;
+            const maxScrollOffset = (MAX_COLUMNS - 1) * columnWidth; // Maximum scroll distance
+            
+            setManualScrollOffset(prev => {
+                const delta = e.deltaY > 0 ? scrollSpeed : -scrollSpeed;
+                const newOffset = prev + delta;
+                // Clamp scroll offset between 0 and maxScrollOffset
+                return Math.max(0, Math.min(maxScrollOffset, newOffset));
+            });
+            
+            // Reset user scrolling flag after a delay
+            setTimeout(() => setIsUserScrolling(false), 1000);
+        };
+
+        const canvas = canvasRef.current;
+        if (canvas) {
+            canvas.addEventListener('wheel', handleWheel, { passive: false });
+            return () => canvas.removeEventListener('wheel', handleWheel);
+        }
+    }, [dimensions.width]);
+
     // Smooth camera transition effect
     useEffect(() => {
         if (targetColumn !== activeColumn) {
@@ -523,7 +557,11 @@ export default function DocumentJourneyInteractive() {
         return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
     };
 
-    const cameraX = dimensions.width / 2 - (activeColumn * ((dimensions.width + 100) / 3)) - NODE_WIDTH / 2;
+    const autoCameraX = dimensions.width / 2 - (activeColumn * ((dimensions.width + 100) / 3)) - NODE_WIDTH / 2;
+    // When user is actively scrolling, use pure manual scroll. Otherwise combine with auto camera
+    const cameraX = isUserScrolling 
+        ? dimensions.width / 2 - manualScrollOffset - NODE_WIDTH / 2
+        : autoCameraX - manualScrollOffset;
 
     return (
         <div className="h-screen w-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white font-sans overflow-hidden relative">
@@ -621,10 +659,11 @@ export default function DocumentJourneyInteractive() {
                         <AnimatePresence>
                             {nodes.map(n => {
                                 const nodeColumn = NODE_COLUMNS[n.id];
-                                // Render all nodes, but scale them based on distance from active column
                                 if (allPositions[n.id]) {
+                                    // Always render all nodes when manually scrolling, or when close to active column
                                     const distanceFromActive = Math.abs(nodeColumn - activeColumn);
-                                    const shouldRender = distanceFromActive <= 2; // Show current + 2 columns ahead/behind
+                                    const hasManualScroll = Math.abs(manualScrollOffset) > 10; // If user has scrolled manually
+                                    const shouldRender = hasManualScroll || distanceFromActive <= 2;
                                     
                                     if (shouldRender) {
                                         return (
