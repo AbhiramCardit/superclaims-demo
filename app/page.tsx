@@ -12,6 +12,8 @@ import { SAMPLE_FINAL_OUTPUT } from "./sample-data";
 
 const NODE_WIDTH = 160;
 const NODE_HEIGHT = 80;
+const FILE_INPUT_WIDTH = 200;
+const FILE_INPUT_HEIGHT = 120;
 
 // Master timing control - adjust this to speed up/slow down entire animation
 const ANIMATION_SPEED_MULTIPLIER = 2.8 + Math.random() * 0.5; // Random between 2.8-3.3 for each run
@@ -104,8 +106,9 @@ function generateAllPositions(width: number, height: number): Record<string, Pos
 // --- End New Logic ---
 
 
-function pathBetween(a: Position, b: Position): string {
-    const [ax, ay] = [a.x + NODE_WIDTH, a.y + NODE_HEIGHT / 2];
+function pathBetween(a: Position, b: Position, aIsFileInput = false): string {
+    const aWidth = aIsFileInput ? FILE_INPUT_WIDTH : NODE_WIDTH;
+    const [ax, ay] = [a.x + aWidth, a.y + NODE_HEIGHT / 2];
     const [bx, by] = [b.x, b.y + NODE_HEIGHT / 2];
     
     const controlOffset = Math.abs(bx - ax) * 0.3;
@@ -125,6 +128,8 @@ const NodeCard = ({ node, pos, isComplete, isProcessing, selectedFile, onFileSel
     selectedFile?: File | null;
     onFileSelect?: (file: File | null) => void;
 }) => {
+    const [isDragOver, setIsDragOver] = useState(false);
+    
     const typeColors = {
         file_input: "from-blue-700/90 to-blue-800/90 border-blue-600/50",
         input: "from-slate-700/90 to-slate-800/90 border-slate-600/50",
@@ -143,14 +148,69 @@ const NodeCard = ({ node, pos, isComplete, isProcessing, selectedFile, onFileSel
             onFileSelect(file);
         }
     };
+
+    const handleDragOver = (e: React.DragEvent) => {
+        e.preventDefault();
+        setIsDragOver(true);
+    };
+
+    const handleDragLeave = (e: React.DragEvent) => {
+        e.preventDefault();
+        setIsDragOver(false);
+    };
+
+    const handleDrop = (e: React.DragEvent) => {
+        e.preventDefault();
+        setIsDragOver(false);
+        const file = e.dataTransfer.files[0];
+        if (file && onFileSelect) {
+            onFileSelect(file);
+        }
+    };
+
+    const formatFileSize = (bytes: number) => {
+        if (bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+    };
+
+    const getFileIcon = (fileName: string) => {
+        const ext = fileName.split('.').pop()?.toLowerCase();
+        switch (ext) {
+            case 'pdf': return <FileText size={20} className="text-red-400" />;
+            case 'doc':
+            case 'docx': return <FileText size={20} className="text-blue-400" />;
+            case 'txt': return <FileText size={20} className="text-gray-400" />;
+            case 'jpg':
+            case 'jpeg':
+            case 'png': return <FileText size={20} className="text-green-400" />;
+            default: return <FileText size={20} className="text-blue-100" />;
+        }
+    };
+    
+    const isFileInput = node.type === "file_input";
+    const nodeWidth = isFileInput ? FILE_INPUT_WIDTH : NODE_WIDTH;
+    const nodeHeight = isFileInput ? FILE_INPUT_HEIGHT : NODE_HEIGHT;
     
     return (
         <div
             id={`node-${node.id}`}
-            style={{ left: pos.x, top: pos.y, width: NODE_WIDTH, height: NODE_HEIGHT }}
-            className={`absolute rounded-xl border-2 backdrop-blur-md transition-all duration-500 bg-gradient-to-br ${baseColor}`}
+            style={{ 
+                left: pos.x, 
+                top: pos.y - (isFileInput ? (FILE_INPUT_HEIGHT - NODE_HEIGHT) / 2 : 0), 
+                width: nodeWidth, 
+                height: nodeHeight 
+            }}
+            className={`absolute rounded-xl border-2 backdrop-blur-md transition-all duration-500 bg-gradient-to-br ${baseColor} ${
+                isDragOver ? 'border-blue-400 shadow-lg shadow-blue-500/30 scale-105' : ''
+            }`}
+            onDragOver={isFileInput ? handleDragOver : undefined}
+            onDragLeave={isFileInput ? handleDragLeave : undefined}
+            onDrop={isFileInput ? handleDrop : undefined}
         >
-            {node.type === "file_input" ? (
+            {isFileInput ? (
                 <div className="flex flex-col items-center justify-center h-full p-3 relative z-10">
                     <input
                         type="file"
@@ -158,21 +218,42 @@ const NodeCard = ({ node, pos, isComplete, isProcessing, selectedFile, onFileSel
                         className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20"
                         accept=".pdf,.doc,.docx,.txt,.jpg,.jpeg,.png"
                     />
-                    <div className="p-1 rounded-lg bg-blue-800/80 flex-shrink-0 border border-blue-700/50 mb-2">
-                        <div className="text-blue-100">
-                            {node.icon}
-                        </div>
-                    </div>
-                    <div className="text-[10px] font-semibold text-blue-100 leading-tight text-center w-full px-1">
-                        {selectedFile ? 
-                            (selectedFile.name.length > 13 ? selectedFile.name.substring(0, 13) + "..." : selectedFile.name) 
-                            : node.label
-                        }
-                    </div>
-                    {selectedFile && (
-                        <div className="text-xs text-blue-200 mt-1">
-                            {(selectedFile.size / 1024 / 1024).toFixed(1)} MB
-                        </div>
+                    
+                    {!selectedFile ? (
+                        <>
+                            <div className="p-2 rounded-xl bg-blue-800/80 flex-shrink-0 border border-blue-700/50 mb-2">
+                                <div className="text-blue-100">
+                                    {node.icon}
+                                </div>
+                            </div>
+                            <div className="text-xs font-semibold text-blue-100 leading-tight text-center w-full px-1 mb-1">
+                                {node.label}
+                            </div>
+                            <div className="text-[10px] text-blue-300 text-center px-1 leading-tight">
+                                Click or drag & drop files here
+                            </div>
+                            <div className="text-[9px] text-blue-400 text-center px-1 mt-1 leading-tight">
+                                PDF
+                            </div>
+                        </>
+                    ) : (
+                        <>
+                            <div className="p-2 rounded-lg bg-blue-800/80 flex-shrink-0 border border-blue-700/50 mb-2">
+                                {getFileIcon(selectedFile.name)}
+                            </div>
+                            <div className="text-xs font-semibold text-blue-100 leading-tight text-center w-full px-1 mb-1">
+                                {selectedFile.name.length > 18 ? 
+                                    selectedFile.name.substring(0, 18) + "..." : 
+                                    selectedFile.name
+                                }
+                            </div>
+                            <div className="text-[10px] text-blue-200 mb-1">
+                                {formatFileSize(selectedFile.size)}
+                            </div>
+                            <div className="text-[9px] text-blue-300 text-center px-1 leading-tight">
+                                Click to change file
+                            </div>
+                        </>
                     )}
                     
                     {isComplete && (
@@ -203,12 +284,19 @@ const NodeCard = ({ node, pos, isComplete, isProcessing, selectedFile, onFileSel
     );
 };
 
-const MovingDoc = ({ start, end, duration }: { start: Position; end: Position; duration: number }) => {
+const MovingDoc = ({ start, end, duration, isFromFileInput = false }: { 
+    start: Position; 
+    end: Position; 
+    duration: number; 
+    isFromFileInput?: boolean;
+}) => {
+    const startWidth = isFromFileInput ? FILE_INPUT_WIDTH : NODE_WIDTH;
+    
     return (
         <motion.div
             className="absolute z-40"
             initial={{
-                x: start.x + NODE_WIDTH - 20,
+                x: start.x + startWidth - 20,
                 y: start.y + NODE_HEIGHT / 2 - 20,
                 opacity: 0,
                 scale: 0.8,
@@ -603,10 +691,11 @@ export default function DocumentJourneyInteractive() {
                                 if (!posA || !posB) return null;
                                 const isActive = completedNodes.has(from) && completedNodes.has(to);
                                 const isAnimating = visibleDocs.some(d => d.from === from && d.to === to);
+                                const isFileInput = from === "file_input";
                                 return (
                                     <g key={`${from}-${to}`}>
                                         <path 
-                                            d={pathBetween(posA, posB)} 
+                                            d={pathBetween(posA, posB, isFileInput)} 
                                             fill="none" 
                                             stroke={isActive ? "url(#edge-gradient-active)" : "url(#edge-gradient-inactive)"} 
                                             strokeWidth={isAnimating ? "3" : "2"} 
@@ -650,7 +739,8 @@ export default function DocumentJourneyInteractive() {
                                     key={doc.id} 
                                     start={allPositions[doc.from]} 
                                     end={allPositions[doc.to]} 
-                                    duration={doc.duration} 
+                                    duration={doc.duration}
+                                    isFromFileInput={doc.from === "file_input"}
                                 />
                             ))}
                         </AnimatePresence>
