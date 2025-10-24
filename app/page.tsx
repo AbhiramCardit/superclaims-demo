@@ -8,12 +8,18 @@ import {
   Loader2, CheckCircle, X, Eye, Play, Clock, FileStack, TrendingUp,
   Activity, Cpu, Database, Upload
 } from "lucide-react";
+import { SAMPLE_FINAL_OUTPUT } from "./sample-data";
 
 const NODE_WIDTH = 160;
 const NODE_HEIGHT = 80;
-const LAYER_TRANSITION_DELAY = 3000; // Time between layer transitions in milliseconds
-const DOC_MOVEMENT_DURATION = 2000; // Duration for document movement between nodes
-const DOC_MOVEMENT_DELAY = 5000; // Delay between document movements
+
+// Master timing control - adjust this to speed up/slow down entire animation
+//const ANIMATION_SPEED_MULTIPLIER = 2.8 + Math.random() * 0.5; // Random between 2.8-3.3 for each run
+const ANIMATION_SPEED_MULTIPLIER = 1
+
+const LAYER_TRANSITION_DELAY = 1000 * ANIMATION_SPEED_MULTIPLIER; // Time between layer transitions in milliseconds
+const DOC_MOVEMENT_DURATION = 2000 ; // Duration for document movement between nodes
+const LAYER_MOVEMENT_DELAY = 6000 * ANIMATION_SPEED_MULTIPLIER; // Delay between layer movements (all docs move together)
 
 const AGENTS = [
     { id: "file_input", label: "File Input", icon: <Upload size={24} />, type: "file_input" },
@@ -41,13 +47,8 @@ const EDGES: [string, string][] = [
     ["patient_summary_agent", "completion_aggregator"],
 ];
 
-const FINAL_AGGREGATED_OUTPUT = {
-    "status": "SUCCESS", "case_id": "CASE-2025-10-12-A7B2", "timestamp": new Date().toISOString(),
-    "patient_summary": { "patient_id": "P-98765", "name": "John Doe", "policy_no": "POL123456", "admission_date": "2025-10-08", "discharge_date": "2025-10-12", "diagnosis": "Acute Appendicitis" },
-    "financials": { "total_claimed": 45000, "nme_deductions": 1000, "payable_amount": 44000, "bank_details": { "account_no": "XXXX-XXXX-3210", "ifsc": "HDFC0001234" }},
-    "analysis_flags": { "duplicates_detected": true, "duplicate_count": 1, "policy_limit_breached": false },
-    "documents_processed": 5
-};
+// Using sample data from external file
+const FINAL_AGGREGATED_OUTPUT = SAMPLE_FINAL_OUTPUT;
 
 type Node = { id: string; label: string; icon: React.ReactElement; type: string };
 type Position = { x: number; y: number };
@@ -411,7 +412,7 @@ export default function DocumentJourneyInteractive() {
         setActiveColumn(0);
         setTargetColumn(0);
 
-        // --- Modified Simulation Logic ---
+        // --- Modified Simulation Logic for Layer-based Movement ---
         setTimeout(() => {
             setCompletedNodes(prev => new Set(prev).add("input"));
             setProcessingNodes(new Set(["input"]));
@@ -420,51 +421,76 @@ export default function DocumentJourneyInteractive() {
         const finalNodeId = "completion_aggregator";
         const finalNodeInputs = EDGES.filter(([, to]) => to === finalNodeId).length;
 
+        // Group edges by source layer (column)
+        const edgesByLayer: Record<number, [string, string][]> = {};
+        EDGES.forEach(([from, to]) => {
+            const sourceColumn = NODE_COLUMNS[from];
+            if (!edgesByLayer[sourceColumn]) {
+                edgesByLayer[sourceColumn] = [];
+            }
+            edgesByLayer[sourceColumn].push([from, to]);
+        });
+
         let currentTime = 1000;
-        const timedSequence: TimedStep[] = EDGES.map(([from, to], index) => {
-            if(from === 'file_input') return null; // Already handled
-            const duration = DOC_MOVEMENT_DURATION;
-            const step = { id: `${from}-${to}-${index}`, from, to, startTime: currentTime, duration };
-            currentTime += DOC_MOVEMENT_DELAY;
-            return step;
-        }).filter(Boolean) as TimedStep[];
+        
+        // Process each layer sequentially
+        Object.keys(edgesByLayer).sort((a, b) => parseInt(a) - parseInt(b)).forEach((layerStr, layerIndex) => {
+            const layer = parseInt(layerStr);
+            const layerEdges = edgesByLayer[layer];
+            
+            // All documents from this layer move simultaneously
+            layerEdges.forEach(([from, to], edgeIndex) => {
+                const step: TimedStep = {
+                    id: `${from}-${to}-${layerIndex}-${edgeIndex}`,
+                    from,
+                    to,
+                    startTime: currentTime,
+                    duration: DOC_MOVEMENT_DURATION
+                };
 
-        timedSequence.forEach(step => {
-            timeoutIds.current.push(setTimeout(() => {
-                setVisibleDocs(prev => [...prev, step]);
-                setProcessingNodes(prev => {
-                    const newSet = new Set(prev);
-                    newSet.delete(step.from);
-                    newSet.add(step.to);
-                    return newSet;
-                });
+                // Start movement for all docs in this layer
+                timeoutIds.current.push(setTimeout(() => {
+                    setVisibleDocs(prev => [...prev, step]);
+                    setProcessingNodes(prev => {
+                        const newSet = new Set(prev);
+                        newSet.delete(step.from);
+                        newSet.add(step.to);
+                        return newSet;
+                    });
 
-                // Update target column based on the new processing node
-                const targetNodeColumn = NODE_COLUMNS[step.to];
-                if (targetNodeColumn >= 0) {
-                     setTargetColumn(Math.max(targetNodeColumn, 0));
-                }
-            }, step.startTime));
-
-            timeoutIds.current.push(setTimeout(() => {
-                setCompletedNodes(prev => new Set(prev).add(step.to));
-                setVisibleDocs(prev => prev.filter(d => d.id !== step.id));
-                
-                // Only increment on arrival at non-utility/analysis nodes for demo clarity
-                if(AGENTS.find(a => a.id === step.to)?.type !== 'utility' && AGENTS.find(a => a.id === step.to)?.type !== 'analysis'){
-                    setProcessedCount(c => c + 1);
-                }
-
-                if (step.to === finalNodeId) {
-                    finalArrivalsCounter.current++;
-                    if (finalArrivalsCounter.current >= finalNodeInputs) {
-                        setProcessingNodes(new Set());
-                        setFinished(true);
-                        setRunning(false);
-                        setTimeout(() => setIsModalOpen(true), 800);
+                    // Update target column immediately when documents start moving
+                    const targetNodeColumn = NODE_COLUMNS[step.to];
+                    if (targetNodeColumn >= 0) {
+                         setTargetColumn(Math.max(targetNodeColumn, 0));
                     }
-                }
-            }, step.startTime + step.duration));
+                }, step.startTime));
+
+                // Complete movement for all docs in this layer
+                timeoutIds.current.push(setTimeout(() => {
+                    setCompletedNodes(prev => new Set(prev).add(step.to));
+                    setVisibleDocs(prev => prev.filter(d => d.id !== step.id));
+                    
+                    // Only increment count for actual document processing nodes (extractors and final aggregator)
+                    const targetAgent = AGENTS.find(a => a.id === step.to);
+                    if(targetAgent?.type === 'extractor' || targetAgent?.id === 'completion_aggregator'){
+                        setProcessedCount(c => c + 1);
+                    }
+
+                    if (step.to === finalNodeId) {
+                        finalArrivalsCounter.current++;
+                        if (finalArrivalsCounter.current >= finalNodeInputs) {
+                            setProcessingNodes(new Set());
+                            setFinished(true);
+                            setRunning(false);
+                            // Delay modal to show after camera moves to last node
+                            setTimeout(() => setIsModalOpen(true), LAYER_TRANSITION_DELAY + 1000);
+                        }
+                    }
+                }, step.startTime + step.duration));
+            });
+            
+            // Move to next layer after all docs from current layer have moved
+            currentTime += LAYER_MOVEMENT_DELAY;
         });
     };
 

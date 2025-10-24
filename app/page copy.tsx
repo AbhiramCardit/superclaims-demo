@@ -6,13 +6,17 @@ import {
   FileText, ClipboardCheck, HeartPulse, Pill, IdCard, Landmark,
   CopyCheck, Microscope, FileCheck, RotateCcw, Zap, CheckCircle2,
   Loader2, CheckCircle, X, Eye, Play, Clock, FileStack, TrendingUp,
-  Activity, Cpu, Database
+  Activity, Cpu, Database, Upload
 } from "lucide-react";
 
 const NODE_WIDTH = 160;
 const NODE_HEIGHT = 80;
+const LAYER_TRANSITION_DELAY = 3000; // Time between layer transitions in milliseconds
+const DOC_MOVEMENT_DURATION = 2000; // Duration for document movement between nodes
+const DOC_MOVEMENT_DELAY = 5000; // Delay between document movements
 
 const AGENTS = [
+    { id: "file_input", label: "File Input", icon: <Upload size={24} />, type: "file_input" },
     { id: "input", label: "Input Segregation", icon: <FileStack size={24} />, type: "input" },
     { id: "claim_form_agent", label: "Claim Form Extractor", icon: <ClipboardCheck size={22} />, type: "extractor" },
     { id: "discharge_summary_agent", label: "Discharge Summary Extractor", icon: <HeartPulse size={22} />, type: "extractor" },
@@ -27,6 +31,7 @@ const AGENTS = [
 ];
 
 const EDGES: [string, string][] = [
+    ["file_input", "input"],
     ["input", "discharge_summary_agent"], ["input", "pharmacy_bills_agent"], ["input", "claim_form_agent"], ["input", "ids_agent"], ["input", "cheque_or_bank_details_agent"],
     ["pharmacy_bills_agent", "items_categorisation_agent"], ["pharmacy_bills_agent", "duplicate_detection_agent"],
     ["items_categorisation_agent", "nme_analysis_agent"],
@@ -49,194 +54,190 @@ type Position = { x: number; y: number };
 type TimedStep = { id: string; from: string; to: string; startTime: number; duration: number };
 type Particle = { id: string; x: number; y: number; vx: number; vy: number; life: number };
 
-function generateCenteredPositions(width: number, height: number): Record<string, Position> {
+// --- New Logic for Columnar Layout ---
+const NODE_COLUMNS: Record<string, number> = {
+    "file_input": 0,
+    "input": 1,
+    "claim_form_agent": 2, "discharge_summary_agent": 2, "pharmacy_bills_agent": 2, "cheque_or_bank_details_agent": 2, "ids_agent": 2,
+    "items_categorisation_agent": 3, "duplicate_detection_agent": 3,
+    "patient_summary_agent": 4, "nme_analysis_agent": 4,
+    "completion_aggregator": 5
+};
+
+const MAX_COLUMNS = 6;
+
+function generateAllPositions(width: number, height: number): Record<string, Position> {
     if (!width || !height) return {};
     const positions: Record<string, Position> = {};
-    const COL_WIDTH = (width - NODE_WIDTH) / 5;
-    const ROW_HEIGHT = (height - NODE_HEIGHT) / 5;
-
-    positions["input"] = { x: 50, y: height / 2 - NODE_HEIGHT / 2 };
-
-    const extractors = ["discharge_summary_agent", "claim_form_agent", "pharmacy_bills_agent", "ids_agent", "cheque_or_bank_details_agent"];
-    extractors.forEach((id, i) => { positions[id] = { x: 50 + COL_WIDTH, y: i * ROW_HEIGHT + ROW_HEIGHT/2.5 }; });
-
-    positions["items_categorisation_agent"] = { x: 50 + 2 * COL_WIDTH, y: 1.8 * ROW_HEIGHT + ROW_HEIGHT/2.5};
-    positions["duplicate_detection_agent"] = { x: 50 + 2 * COL_WIDTH, y: 3.2 * ROW_HEIGHT + ROW_HEIGHT/2.5 };
-    positions["nme_analysis_agent"] = { x: 50 + 3 * COL_WIDTH, y: 2 * ROW_HEIGHT + ROW_HEIGHT/2.5 };
-    positions["patient_summary_agent"] = { x: 50 + 3 * COL_WIDTH, y: 0.8 * ROW_HEIGHT + ROW_HEIGHT/2.5 };
-
-    positions["completion_aggregator"] = { x: width - NODE_WIDTH - 50, y: height / 2 - NODE_HEIGHT / 2 };
+    const COL_WIDTH = (width + 100) / 3; // Make columns wider apart for panning
+    
+    for (let i = 0; i < MAX_COLUMNS; i++) {
+        const columnNodes = AGENTS.filter(agent => NODE_COLUMNS[agent.id] === i);
+        const ROW_HEIGHT = height / (columnNodes.length + 1);
+        
+        columnNodes.forEach((node, j) => {
+            let yOffset = 0;
+            // Add vertical offset for specific nodes to create visual separation
+            if (node.id === "file_input") {
+                yOffset = -1; // Move file_input up
+            } else if (node.id === "input") {
+                yOffset = 1; // Move input segregation down
+            } else if (node.id === "cheque_or_bank_details_agent") {
+                yOffset = -0.5; // Move cheque/bank up slightly
+            } else if (node.id === "patient_summary_agent") {
+                yOffset = 0.5; // Move patient summary down slightly
+            } else if (node.id === "duplicate_detection_agent") {
+                yOffset = -0.3; // Move duplicate detection up slightly
+            } else if (node.id === "nme_analysis_agent") {
+                yOffset = 0.3; // Move NME analysis down slightly
+            }
+            
+            positions[node.id] = {
+                x: i * COL_WIDTH,
+                y: (j + 1) * ROW_HEIGHT - NODE_HEIGHT / 2 + yOffset
+            };
+        });
+    }
     return positions;
 }
+// --- End New Logic ---
+
 
 function pathBetween(a: Position, b: Position): string {
     const [ax, ay] = [a.x + NODE_WIDTH, a.y + NODE_HEIGHT / 2];
     const [bx, by] = [b.x, b.y + NODE_HEIGHT / 2];
-    return `M ${ax} ${ay} L ${bx} ${by}`;
+    
+    const controlOffset = Math.abs(bx - ax) * 0.3;
+    const cp1x = ax + controlOffset;
+    const cp1y = ay;
+    const cp2x = bx - controlOffset;
+    const cp2y = by;
+    
+    return `M ${ax} ${ay} C ${cp1x} ${cp1y} ${cp2x} ${cp2y} ${bx} ${by}`;
 }
 
-const NodeCard = ({ node, pos, isComplete, isProcessing }: { node: Node; pos: Position; isComplete: boolean; isProcessing: boolean }) => {
+const NodeCard = ({ node, pos, isComplete, isProcessing, selectedFile, onFileSelect }: { 
+    node: Node; 
+    pos: Position; 
+    isComplete: boolean; 
+    isProcessing: boolean;
+    selectedFile?: File | null;
+    onFileSelect?: (file: File | null) => void;
+}) => {
     const typeColors = {
-        input: "from-blue-600/20 to-blue-800/20 border-blue-500/40",
-        extractor: "from-violet-600/20 to-violet-800/20 border-violet-500/40",
-        utility: "from-cyan-600/20 to-cyan-800/20 border-cyan-500/40",
-        analysis: "from-amber-600/20 to-amber-800/20 border-amber-500/40",
-        aggregate: "from-emerald-600/20 to-emerald-800/20 border-emerald-500/40",
-        end: "from-orange-600/20 to-orange-800/20 border-orange-500/40"
+        file_input: "from-blue-700/90 to-blue-800/90 border-blue-600/50",
+        input: "from-slate-700/90 to-slate-800/90 border-slate-600/50",
+        extractor: "from-slate-700/90 to-slate-800/90 border-slate-600/50",
+        utility: "from-slate-700/90 to-slate-800/90 border-slate-600/50",
+        analysis: "from-slate-700/90 to-slate-800/90 border-slate-600/50",
+        aggregate: "from-slate-700/90 to-slate-800/90 border-slate-600/50",
+        end: "from-slate-700/90 to-slate-800/90 border-slate-600/50"
     };
 
     const baseColor = typeColors[node.type as keyof typeof typeColors] || typeColors.extractor;
     
+    const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0] || null;
+        if (onFileSelect) {
+            onFileSelect(file);
+        }
+    };
+    
     return (
-        <motion.div
-            layout
+        <div
             id={`node-${node.id}`}
             style={{ left: pos.x, top: pos.y, width: NODE_WIDTH, height: NODE_HEIGHT }}
             className={`absolute rounded-xl border-2 backdrop-blur-md transition-all duration-500 bg-gradient-to-br ${baseColor}`}
-            initial={{ scale: 0, opacity: 0 }}
-            animate={{ 
-                scale: isProcessing ? [1, 1.05, 1] : 1, 
+        >
+            {node.type === "file_input" ? (
+                <div className="flex flex-col items-center justify-center h-full p-3 relative z-10">
+                    <input
+                        type="file"
+                        onChange={handleFileChange}
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20"
+                        accept=".pdf,.doc,.docx,.txt,.jpg,.jpeg,.png"
+                    />
+                    <div className="p-1 rounded-lg bg-blue-800/80 flex-shrink-0 border border-blue-700/50 mb-2">
+                        <div className="text-blue-100">
+                            {node.icon}
+                        </div>
+                    </div>
+                    <div className="text-[10px] font-semibold text-blue-100 leading-tight text-center w-full px-1">
+                        {selectedFile ? 
+                            (selectedFile.name.length > 13 ? selectedFile.name.substring(0, 13) + "..." : selectedFile.name) 
+                            : node.label
+                        }
+                    </div>
+                    {selectedFile && (
+                        <div className="text-xs text-blue-200 mt-1">
+                            {(selectedFile.size / 1024 / 1024).toFixed(1)} MB
+                        </div>
+                    )}
+                    
+                    {isComplete && (
+                        <div className="absolute -top-3 -right-3 w-7 h-7 bg-gradient-to-br from-orange-500 to-orange-600 rounded-full flex items-center justify-center shadow-lg shadow-orange-500/50 border-2 border-slate-900">
+                            <CheckCircle2 size={14} className="text-white" />
+                        </div>
+                    )}
+                </div>
+            ) : (
+                <div className="flex items-center gap-3 h-full p-4 relative z-10">
+                    <div className="p-2.5 rounded-lg bg-slate-800/80 flex-shrink-0 border border-slate-700/50">
+                        <div className="text-slate-100">
+                            {node.icon}
+                        </div>
+                    </div>
+                    <div className="text-xs font-semibold text-slate-100 leading-tight flex-1">
+                        {node.label}
+                    </div>
+                    
+                    {isComplete && (
+                        <div className="absolute -top-3 -right-3 w-7 h-7 bg-gradient-to-br from-orange-500 to-orange-600 rounded-full flex items-center justify-center shadow-lg shadow-orange-500/50 border-2 border-slate-900">
+                            <CheckCircle2 size={14} className="text-white" />
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+};
+
+const MovingDoc = ({ start, end, duration }: { start: Position; end: Position; duration: number }) => {
+    return (
+        <motion.div
+            className="absolute z-40"
+            initial={{
+                x: start.x + NODE_WIDTH - 20,
+                y: start.y + NODE_HEIGHT / 2 - 20,
+                opacity: 0,
+                scale: 0.8,
+            }}
+            animate={{
+                x: end.x - 20,
+                y: end.y + NODE_HEIGHT / 2 - 20,
                 opacity: 1,
-                boxShadow: isComplete 
-                    ? "0 0 30px rgba(249, 115, 22, 0.4)" 
-                    : isProcessing 
-                    ? "0 0 20px rgba(249, 115, 22, 0.2)" 
-                    : "0 0 0 rgba(0,0,0,0)"
+                scale: 1,
             }}
             transition={{ 
-                scale: { duration: 0.4, repeat: isProcessing ? Infinity : 0 },
-                opacity: { duration: 0.6, ease: "easeOut" }
+                duration: duration / 1000, 
+                ease: [0.4, 0, 0.2, 1],
             }}
         >
-            {isProcessing && (
-                <motion.div
-                    className="absolute inset-0 rounded-xl bg-gradient-to-r from-orange-500/0 via-orange-500/20 to-orange-500/0"
-                    animate={{ x: ["-100%", "200%"] }}
-                    transition={{ duration: 1.5, repeat: Infinity, ease: "linear" }}
-                />
-            )}
-            
-            <div className="flex items-center gap-3 h-full p-4 relative z-10">
-                <motion.div 
-                    className="p-2.5 rounded-lg bg-slate-800/80 flex-shrink-0 border border-slate-700/50"
-                    animate={isProcessing ? { rotate: [0, 5, -5, 0] } : {}}
-                    transition={{ duration: 0.5, repeat: isProcessing ? Infinity : 0 }}
-                >
-                    <div className="text-slate-100">
-                        {node.icon}
-                    </div>
-                </motion.div>
-                <div className="text-xs font-semibold text-slate-100 leading-tight flex-1">
-                    {node.label}
+            <div className="relative">
+                <div className="absolute inset-0 bg-orange-500 rounded-xl blur-lg opacity-40" />
+                <div className="relative bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl p-2.5 shadow-2xl flex items-center justify-center border-2 border-orange-400/50">
+                    <FileText size={18} className="text-white" />
                 </div>
-                
-                <AnimatePresence>
-                    {isComplete && (
-                        <motion.div
-                            initial={{ scale: 0, rotate: -180 }}
-                            animate={{ scale: 1, rotate: 0 }}
-                            exit={{ scale: 0 }}
-                            className="absolute -top-3 -right-3 w-7 h-7 bg-gradient-to-br from-orange-500 to-orange-600 rounded-full flex items-center justify-center shadow-lg shadow-orange-500/50 border-2 border-slate-900"
-                        >
-                            <CheckCircle2 size={14} className="text-white" />
-                        </motion.div>
-                    )}
-                </AnimatePresence>
-                
-                {isProcessing && !isComplete && (
-                    <motion.div
-                        animate={{ rotate: 360 }}
-                        transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
-                        className="absolute -top-3 -right-3 w-7 h-7 bg-gradient-to-br from-orange-500 to-orange-600 rounded-full flex items-center justify-center shadow-lg shadow-orange-500/50 border-2 border-slate-900"
-                    >
-                        <Loader2 size={14} className="text-white" />
-                    </motion.div>
-                )}
             </div>
         </motion.div>
     );
 };
 
-const MovingDoc = ({ start, end, duration }: { start: Position; end: Position; duration: number }) => {
-    const [particles, setParticles] = useState<Particle[]>([]);
-
-    useEffect(() => {
-        const interval = setInterval(() => {
-            setParticles(prev => {
-                const newParticles = prev
-                    .map(p => ({ ...p, x: p.x + p.vx, y: p.y + p.vy, life: p.life - 0.02 }))
-                    .filter(p => p.life > 0);
-                
-                if (Math.random() > 0.7) {
-                    newParticles.push({
-                        id: Math.random().toString(),
-                        x: 0,
-                        y: 0,
-                        vx: (Math.random() - 0.5) * 2,
-                        vy: (Math.random() - 0.5) * 2,
-                        life: 1
-                    });
-                }
-                
-                return newParticles;
-            });
-        }, 50);
-
-        return () => clearInterval(interval);
-    }, []);
-
-    return (
-        <>
-            <motion.div
-                className="absolute z-40"
-                initial={{
-                    x: start.x + NODE_WIDTH - 20,
-                    y: start.y + NODE_HEIGHT / 2 - 20,
-                    opacity: 0,
-                    scale: 0.5,
-                }}
-                animate={{
-                    x: end.x - 20,
-                    y: end.y + NODE_HEIGHT / 2 - 20,
-                    opacity: [0, 1, 1, 0.8],
-                    scale: [0.5, 1.2, 1, 1],
-                }}
-                transition={{ 
-                    duration: duration / 1000, 
-                    ease: [0.34, 1.56, 0.64, 1],
-                }}
-            >
-                <div className="relative">
-                    <motion.div 
-                        className="absolute inset-0 bg-orange-500 rounded-xl blur-xl"
-                        animate={{ scale: [1, 1.5, 1], opacity: [0.6, 0.3, 0.6] }}
-                        transition={{ duration: 1, repeat: Infinity }}
-                    />
-                    <div className="relative bg-gradient-to-br from-orange-500 to-orange-600 rounded-xl p-2.5 shadow-2xl flex items-center justify-center border-2 border-orange-400/50">
-                        <FileText size={18} className="text-white" />
-                        {particles.map(p => (
-                            <div
-                                key={p.id}
-                                className="absolute w-1 h-1 bg-orange-300 rounded-full"
-                                style={{
-                                    left: `${p.x + 10}px`,
-                                    top: `${p.y + 10}px`,
-                                    opacity: p.life,
-                                }}
-                            />
-                        ))}
-                    </div>
-                </div>
-            </motion.div>
-        </>
-    );
-};
-
 const MetricsPanel = ({ processedDocs, activeAgents, totalTime }: { processedDocs: number; activeAgents: number; totalTime: string }) => (
     <motion.div
-        initial={{ opacity: 0, y: -20 }}
+        initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="absolute top-8 right-8 bg-slate-900/90 backdrop-blur-xl border border-slate-700/50 rounded-xl p-5 shadow-2xl"
+        className="absolute top-4 right-4 bg-slate-900/90 backdrop-blur-xl border border-slate-700/50 rounded-xl p-5 shadow-2xl z-20"
     >
         <div className="text-xs font-semibold text-slate-400 mb-3 uppercase tracking-wider">Live Metrics</div>
         <div className="grid grid-cols-3 gap-6">
@@ -348,6 +349,9 @@ export default function DocumentJourneyInteractive() {
     const [startTime, setStartTime] = useState<number | null>(null);
     const [elapsedTime, setElapsedTime] = useState(0);
     const [processedCount, setProcessedCount] = useState(0);
+    const [selectedFile, setSelectedFile] = useState<File | null>(null);
+    const [activeColumn, setActiveColumn] = useState(0);
+    const [targetColumn, setTargetColumn] = useState(0);
 
     const canvasRef = useRef<HTMLDivElement>(null);
     const timeoutIds = useRef<NodeJS.Timeout[]>([]);
@@ -355,7 +359,7 @@ export default function DocumentJourneyInteractive() {
     const timerInterval = useRef<NodeJS.Timeout | null>(null);
 
     const nodes = useMemo<Node[]>(() => AGENTS, []);
-    const positions = useMemo(() => generateCenteredPositions(dimensions.width, dimensions.height), [dimensions]);
+    const allPositions = useMemo(() => generateAllPositions(dimensions.width, dimensions.height), [dimensions]);
 
     useEffect(() => {
         if (canvasRef.current) {
@@ -400,41 +404,61 @@ export default function DocumentJourneyInteractive() {
         setRunning(true);
         setFinished(false);
         setIsModalOpen(false);
-        setCompletedNodes(new Set(["input"]));
-        setProcessingNodes(new Set());
+        setCompletedNodes(new Set(["file_input"]));
+        setProcessingNodes(new Set(["file_input"])); // Start with file_input processing
         setVisibleDocs([]);
         setProcessedCount(0);
+        setActiveColumn(0);
+        setTargetColumn(0);
+
+        // --- Modified Simulation Logic ---
+        setTimeout(() => {
+            setCompletedNodes(prev => new Set(prev).add("input"));
+            setProcessingNodes(new Set(["input"]));
+        }, 500);
 
         const finalNodeId = "completion_aggregator";
         const finalNodeInputs = EDGES.filter(([, to]) => to === finalNodeId).length;
 
-        let currentTime = 500;
+        let currentTime = 1000;
         const timedSequence: TimedStep[] = EDGES.map(([from, to], index) => {
-            const duration = 1800 + Math.random() * 1200;
+            if(from === 'file_input') return null; // Already handled
+            const duration = DOC_MOVEMENT_DURATION;
             const step = { id: `${from}-${to}-${index}`, from, to, startTime: currentTime, duration };
-            currentTime += 600 + Math.random() * 600;
+            currentTime += DOC_MOVEMENT_DELAY;
             return step;
-        });
+        }).filter(Boolean) as TimedStep[];
 
         timedSequence.forEach(step => {
             timeoutIds.current.push(setTimeout(() => {
                 setVisibleDocs(prev => [...prev, step]);
-                setProcessingNodes(prev => new Set(prev).add(step.to));
+                setProcessingNodes(prev => {
+                    const newSet = new Set(prev);
+                    newSet.delete(step.from);
+                    newSet.add(step.to);
+                    return newSet;
+                });
+
+                // Update target column based on the new processing node
+                const targetNodeColumn = NODE_COLUMNS[step.to];
+                if (targetNodeColumn >= 0) {
+                     setTargetColumn(Math.max(targetNodeColumn, 0));
+                }
             }, step.startTime));
 
             timeoutIds.current.push(setTimeout(() => {
                 setCompletedNodes(prev => new Set(prev).add(step.to));
-                setProcessingNodes(prev => {
-                    const newSet = new Set(prev);
-                    newSet.delete(step.to);
-                    return newSet;
-                });
                 setVisibleDocs(prev => prev.filter(d => d.id !== step.id));
-                setProcessedCount(c => c + 1);
+                
+                // Only increment on arrival at non-utility/analysis nodes for demo clarity
+                if(AGENTS.find(a => a.id === step.to)?.type !== 'utility' && AGENTS.find(a => a.id === step.to)?.type !== 'analysis'){
+                    setProcessedCount(c => c + 1);
+                }
 
                 if (step.to === finalNodeId) {
                     finalArrivalsCounter.current++;
                     if (finalArrivalsCounter.current >= finalNodeInputs) {
+                        setProcessingNodes(new Set());
                         setFinished(true);
                         setRunning(false);
                         setTimeout(() => setIsModalOpen(true), 800);
@@ -448,6 +472,24 @@ export default function DocumentJourneyInteractive() {
         return () => timeoutIds.current.forEach(clearTimeout);
     }, []);
 
+    // Smooth camera transition effect
+    useEffect(() => {
+        if (targetColumn !== activeColumn) {
+            const interval = setInterval(() => {
+                setActiveColumn(prev => {
+                    if (prev < targetColumn) {
+                        return prev + 1;
+                    } else if (prev > targetColumn) {
+                        return prev - 1;
+                    }
+                    return prev;
+                });
+            }, LAYER_TRANSITION_DELAY); // Move camera every LAYER_TRANSITION_DELAY ms
+            
+            return () => clearInterval(interval);
+        }
+    }, [targetColumn, activeColumn]);
+
     const formatTime = (ms: number) => {
         const seconds = Math.floor(ms / 1000);
         const minutes = Math.floor(seconds / 60);
@@ -455,78 +497,62 @@ export default function DocumentJourneyInteractive() {
         return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
     };
 
+    const cameraX = dimensions.width / 2 - (activeColumn * ((dimensions.width + 100) / 3)) - NODE_WIDTH / 2;
+
     return (
-        <div className="h-screen w-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white flex flex-col font-sans overflow-hidden relative">
+        <div className="h-screen w-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white font-sans overflow-hidden relative">
             <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-800/20 via-transparent to-transparent pointer-events-none" />
             
-            <header className="flex items-center justify-between px-8 py-4 flex-shrink-0 z-10 border-b border-slate-800/50 bg-slate-900/30 backdrop-blur-xl relative">
-                <div>
-                    <h2 className="text-2xl font-bold tracking-tight text-slate-100">Agentic Document Processing</h2>
-                    <p className="text-sm text-slate-400 mt-1.5">Intelligent workflow orchestration powered by AI agents</p>
-                </div>
-                <div className="flex items-center gap-5">
-                    <div className="flex items-center gap-4">
-                        {(running || finished) && (
-                            <motion.div 
-                                initial={{ scale: 0.9, opacity: 0 }}
-                                animate={{ scale: 1, opacity: 1 }}
-                                className="flex items-center gap-2.5 px-5 py-2.5 bg-slate-800/60 rounded-xl border border-slate-700/50 backdrop-blur-sm"
-                            >
-                                <Clock size={16} className="text-slate-400" />
-                                <span className="text-sm font-semibold text-slate-200 tabular-nums">{formatTime(elapsedTime)}</span>
-                            </motion.div>
-                        )}
-                        <motion.div 
-                            className="flex items-center gap-2.5 px-5 py-2.5 bg-slate-800/60 rounded-xl border border-slate-700/50 backdrop-blur-sm"
-                            animate={running ? { boxShadow: ["0 0 0 rgba(249,115,22,0)", "0 0 20px rgba(249,115,22,0.3)", "0 0 0 rgba(249,115,22,0)"] } : {}}
-                            transition={{ duration: 2, repeat: Infinity }}
-                        >
-                            {running && (
-                                <>
-                                    <Loader2 className="animate-spin text-orange-500" size={18}/>
-                                    <span className="text-sm font-semibold text-orange-500">Processing</span>
-                                </>
-                            )}
-                            {finished && (
-                                <>
-                                    <CheckCircle className="text-emerald-500" size={18}/>
-                                    <span className="text-sm font-semibold text-emerald-500">Completed</span>
-                                </>
-                            )}
-                            {!running && !finished && (
-                                <span className="text-sm font-semibold text-slate-400">Ready to Process</span>
-                            )}
-                        </motion.div>
-                    </div>
-                    {finished && (
-                        <motion.button
-                            initial={{ scale: 0.9, opacity: 0 }}
-                            animate={{ scale: 1, opacity: 1 }}
-                            whileHover={{ scale: 1.05 }}
-                            whileTap={{ scale: 0.95 }}
-                            onClick={() => setIsModalOpen(true)} 
-                            className="bg-slate-800/80 border border-slate-700/50 text-slate-100 px-6 py-2.5 rounded-xl flex items-center gap-2.5 hover:bg-slate-750 transition-all text-sm font-semibold backdrop-blur-sm"
-                        >
-                            <Eye size={16} /> View Results
-                        </motion.button>
+            <div className="absolute top-4 left-4 z-20 flex items-center gap-5">
+                <div className="flex items-center gap-2.5 px-5 py-2.5 bg-slate-800/60 rounded-xl border border-slate-700/50 backdrop-blur-sm">
+                    {running && (
+                        <>
+                            <Loader2 className="animate-spin text-orange-500" size={18}/>
+                            <span className="text-sm font-semibold text-orange-500">Processing</span>
+                        </>
                     )}
+                    {finished && (
+                        <>
+                            <CheckCircle className="text-emerald-500" size={18}/>
+                            <span className="text-sm font-semibold text-emerald-500">Completed</span>
+                        </>
+                    )}
+                    {!running && !finished && (
+                        <span className="text-sm font-semibold text-slate-400">Ready to Process</span>
+                    )}
+                </div>
+                {finished && (
                     <motion.button
+                        initial={{ scale: 0.9, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
                         whileHover={{ scale: 1.05 }}
                         whileTap={{ scale: 0.95 }}
-                        onClick={startDemo} 
-                        disabled={running} 
-                        className="bg-gradient-to-r from-orange-600 to-orange-500 text-white px-7 py-2.5 rounded-xl flex items-center gap-2.5 hover:from-orange-700 hover:to-orange-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm font-semibold shadow-lg shadow-orange-600/30"
+                        onClick={() => setIsModalOpen(true)} 
+                        className="bg-slate-800/80 border border-slate-700/50 text-slate-100 px-6 py-2.5 rounded-xl flex items-center gap-2.5 hover:bg-slate-750 transition-all text-sm font-semibold backdrop-blur-sm"
                     >
-                        {finished ? <RotateCcw size={16} /> : <Play size={16} />}
-                        {finished ? "Run Again" : "Start Processing"}
+                        <Eye size={16} /> View Results
                     </motion.button>
-                </div>
-            </header>
+                )}
+                <motion.button
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={startDemo} 
+                    disabled={running || !selectedFile} 
+                    className="bg-gradient-to-r from-orange-600 to-orange-500 text-white px-7 py-2.5 rounded-xl flex items-center gap-2.5 hover:from-orange-700 hover:to-orange-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed text-sm font-semibold shadow-lg shadow-orange-600/30"
+                >
+                    {finished ? <RotateCcw size={16} /> : <Play size={16} />}
+                    {finished ? "Run Again" : "Start Processing"}
+                </motion.button>
+            </div>
 
-            <main className="flex-grow relative min-h-0">
-                <div ref={canvasRef} className="absolute inset-0 w-full h-full p-8">
-                    <div className="relative w-full h-full">
-                        <svg className="absolute inset-0 w-full h-full pointer-events-none" xmlns="http://www.w3.org/2000/svg">
+            <main className="h-full relative">
+                <div ref={canvasRef} className="absolute inset-0 w-full h-full p-8 overflow-hidden">
+                    <motion.div 
+                        className="relative w-full h-full"
+                        animate={{ x: cameraX }}
+                        transition={{ type: "spring", stiffness: 100, damping: 20 }}
+                    >
+                        <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ width: `${MAX_COLUMNS * ((dimensions.width+100)/3)}px` }}>
                             <defs>
                                 <linearGradient id="edge-gradient-inactive" x1="0%" y1="0%" x2="100%" y2="0%">
                                     <stop offset="0%" style={{stopColor: "rgba(71, 85, 105, 0.3)"}} />
@@ -546,8 +572,8 @@ export default function DocumentJourneyInteractive() {
                                 </filter>
                             </defs>
                             {EDGES.map(([from, to]) => {
-                                const posA = positions[from];
-                                const posB = positions[to];
+                                const posA = allPositions[from];
+                                const posB = allPositions[to];
                                 if (!posA || !posB) return null;
                                 const isActive = completedNodes.has(from) && completedNodes.has(to);
                                 const isAnimating = visibleDocs.some(d => d.from === from && d.to === to);
@@ -565,28 +591,44 @@ export default function DocumentJourneyInteractive() {
                                 );
                             })}
                         </svg>
-
-                        {nodes.map(n => positions[n.id] && (
-                            <NodeCard 
-                                key={n.id} 
-                                node={n} 
-                                pos={positions[n.id]} 
-                                isComplete={completedNodes.has(n.id)}
-                                isProcessing={processingNodes.has(n.id)}
-                            />
-                        ))}
                         
                         <AnimatePresence>
-                            {visibleDocs.map(doc => positions[doc.from] && positions[doc.to] && (
+                            {nodes.map(n => {
+                                const nodeColumn = NODE_COLUMNS[n.id];
+                                // Render all nodes, but scale them based on distance from active column
+                                if (allPositions[n.id]) {
+                                    const distanceFromActive = Math.abs(nodeColumn - activeColumn);
+                                    const shouldRender = distanceFromActive <= 2; // Show current + 2 columns ahead/behind
+                                    
+                                    if (shouldRender) {
+                                        return (
+                                            <NodeCard 
+                                                key={n.id} 
+                                                node={n} 
+                                                pos={allPositions[n.id]} 
+                                                isComplete={completedNodes.has(n.id)}
+                                                isProcessing={processingNodes.has(n.id)}
+                                                selectedFile={n.id === "file_input" ? selectedFile : undefined}
+                                                onFileSelect={n.id === "file_input" ? setSelectedFile : undefined}
+                                            />
+                                        );
+                                    }
+                                }
+                                return null;
+                            })}
+                        </AnimatePresence>
+                        
+                        <AnimatePresence>
+                            {visibleDocs.map(doc => allPositions[doc.from] && allPositions[doc.to] && (
                                 <MovingDoc 
                                     key={doc.id} 
-                                    start={positions[doc.from]} 
-                                    end={positions[doc.to]} 
+                                    start={allPositions[doc.from]} 
+                                    end={allPositions[doc.to]} 
                                     duration={doc.duration} 
                                 />
                             ))}
                         </AnimatePresence>
-                    </div>
+                    </motion.div>
                 </div>
                 
                 <AnimatePresence>
